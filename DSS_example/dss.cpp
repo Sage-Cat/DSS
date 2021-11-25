@@ -3,6 +3,7 @@
 #include <sstream>
 
 #include <QDebug>
+#include <QRandomGenerator>
 
 uint64_t DSS::Y() const
 {
@@ -27,10 +28,9 @@ DSS::DSS(uint64_t G, uint64_t P, uint64_t q, uint64_t X)
  * \param M
  * \return string of hex numbers
  */
-QByteArray DSS::sign(QByteArray M)
+EncodedMessage DSS::sign(const QByteArray &M)
 {
-    uint64_t m {}, K {};
-    msg = M;
+    uint64_t m {}, K {}, r {}, s {};
 
     // 1. Hash message
     auto hash = _sha1->hash(M, QCryptographicHash::Sha1);
@@ -39,56 +39,57 @@ QByteArray DSS::sign(QByteArray M)
         m <<= BYTE_SIZE;
     }
 
-    while (_s == 0)
+    do
     {
         // 2. Random k
         K = rand64();
 
         // 3. Calculate r
-        _r = (power(_G, K) % _P) % _q;
+        r = (power(_G, K) % _P) % _q;
 
         // 4. Calculate s
-        _s = (m + _r * _X) / K % _q;
-    }
+        s = (m + r * _X) / K % _q;
+    } while (s == 0);
 
     // 5. Appending S = [r, s] to message
-    for (uint64_t val : { _r, _s }) {
-        QByteArray temp {};
-        for (size_t i = 0; i != BYTES_COUNT; ++i) {
-            temp.push_front(static_cast<char>(val & 0xFF));
-            val >>= BYTE_SIZE;
-        }
-        M.append(temp);
-    }
+    EncodedMessage res {};
+    res.hash = hash;
+    res.r = toByteArray(r);
+    res.s = toByteArray(s);
 
-    qDebug() << "Signing: r = " << _r << " | s = " << _s;
-    Q_ASSERT(_r < _q && _s < _q);
+    qDebug() << "Signing: r = " << r << " | s = " << s;
+    Q_ASSERT(r < _q && s < _q);
 
-    return M;
+    return res;
 }
 
-bool DSS::verify(QByteArray M)
+uint64_t DSS::fromByteArray(const QByteArray &bytes)
+{
+    uint64_t temp {};
+
+    for (size_t i = 0; i < BYTE_SIZE; ++i)
+        temp += bytes.at(bytes.size() - i - 1) & (0xFF << i);
+
+    return temp;
+}
+
+QByteArray DSS::toByteArray(const uint64_t &data)
+{
+    QByteArray temp {};
+
+    for (int i = BYTE_SIZE - 1; i >= 0; --i)
+        temp.push_back(static_cast<char>(data & (0xFF << i)));
+
+    return temp;
+}
+
+bool DSS::verify(const EncodedMessage &encodedMsg)
 {
     bool result { false };
-    const QByteArray message { M };
+    QByteArray M { encodedMsg.hash };
 
     // Get r and s
-    uint64_t s {}, r {};
-
-#ifdef DSS_DEBUG
-    s = _s;
-    r = _r;
-    M = msg;
-#else
-    auto getValue = [&](uint64_t& val) {
-        for (size_t i = 0; i != BYTES_COUNT; ++i) {
-            val += M.back() << BYTE_SIZE * i;
-            M.remove(M.size() - 1, 1); // pop_back
-        }
-    };
-    getValue(s);
-    getValue(r);
-#endif
+    uint64_t s { fromByteArray(encodedMsg.s) }, r { fromByteArray(encodedMsg.r) };
 
     Q_ASSERT(s != 0);
 
@@ -98,7 +99,7 @@ bool DSS::verify(QByteArray M)
         double w { 1.0 / static_cast<double>(s) };
 
         // 2. Hash message
-        uint64_t m {}, s = 0;
+        uint64_t m {};
         auto hash = _sha1->hash(M, QCryptographicHash::Sha1);
         for (char byte : hash.mid(0, BYTE_SIZE)) {
             m += byte;
@@ -114,9 +115,9 @@ bool DSS::verify(QByteArray M)
         u2 = u2 % _q;
 
         // 4. Calculate v
-        uint64_t v { (power(_G, u1) * s * power(_Y, u2) % _P) % _q + r };
+        uint64_t v { (power(_G, u1) * s * power(_Y, u2) % _P) % _q};
 
-        qDebug() << "Verifying: r = " << _r << " | v = " << v;
+        qDebug() << "Verifying: r = " << r << " | v = " << v;
 
         // Check
         if (r == v)
@@ -144,19 +145,14 @@ uint64_t DSS::power(uint64_t x, uint64_t y)
 
 uint64_t DSS::rand64()
 {
-    uint64_t randomNum {};
+    QRandomGenerator gen;
+    uint64_t random64 { gen.generate64() };
 
 #ifdef DSS_DEBUG
-    randomNum += rand() & 0xFF;
-    randomNum++;
-#else
-    for (size_t i = 0; i < L / BYTE_SIZE; ++i) {
-        randomNum += rand() & 0xFF;
-        randomNum <<= BYTE_SIZE;
-    }
+    random64 = random64 & 0xFFFF;
 #endif
 
-    return randomNum;
+    return random64;
 }
 
 void DSS::calculateY()

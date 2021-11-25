@@ -3,11 +3,11 @@
 
 #include <QMainWindow>
 
-class DSS;
-
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
+
+struct EncodedMessage;
 
 class MainWindow : public QMainWindow
 {
@@ -26,6 +26,7 @@ private slots:
 private:
     Ui::MainWindow *ui;
 
-    DSS *_dss;
+    uint64_t G {}, P {}, q {}, X {};
+    EncodedMessage *_encodedMessage;
 };
 #endif // MAINWINDOW_H
